@@ -40,6 +40,11 @@ const userSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
+    firebaseUid: { 
+        type: String, 
+        unique: true, 
+        sparse: true
+    },
     resetPasswordToken: String,
     resetPasswordExpire: Date
 })

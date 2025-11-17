@@ -6,42 +6,39 @@ const logger = require('../utils/logger'); // Winston or similar logger
 
 // Create a new category (Admin only)
 exports.newCategory = asyncErrorHandler(async (req, res, next) => {
-    // Input validation (you should use Joi or express-validator)
-    const { name, description, image, isActive = true } = req.body;
-    
-    if (!name || name.trim().length < 2) {
-        return next(new ApiError('Category name is required and must be at least 2 characters', 400));
+  const { name, description, isActive = true } = req.body;
+  
+  if (!name || name.trim().length < 2) {
+    return next(new ApiError('Category name is required and must be at least 2 characters', 400));
+  }
+
+  // Check if category already exists
+  const existingCategory = await Category.findOne({ 
+    name: { $regex: new RegExp(`^${name}$`, 'i') } 
+  });
+  
+  if (existingCategory) {
+    return next(new ApiError('Category with this name already exists', 400));
+  }
+
+  const category = await Category.create({
+    name: name.trim(),
+    description: description?.trim(),
+    isActive,
+    createdBy: req.user?.id || null,
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Category created successfully',
+    category: {
+      id: category._id,
+      name: category.name,
+      description: category.description,
+      isActive: category.isActive,
+      createdAt: category.createdAt,
     }
-
-    // Check if category already exists
-    const existingCategory = await Category.findOne({ name: { $regex: new RegExp(`^${name}$`, 'i') } });
-    if (existingCategory) {
-        return next(new ApiError('Category with this name already exists', 400));
-    }
-
-    const category = await Category.create({
-        name: name.trim(),
-        description: description?.trim(),
-        image,
-        isActive,
-        createdBy: req.user?.id || null, // From auth middleware
-        // Add timestamps if not in schema
-    });
-
-    logger.info(`Category created: ${category.name} by user ${req.user?.id}`);
-
-    res.status(201).json({
-        success: true,
-        message: 'Category created successfully',
-        category: {
-            id: category._id,
-            name: category.name,
-            description: category.description,
-            image: category.image,
-            isActive: category.isActive,
-            createdAt: category.createdAt,
-        }
-    });
+  });
 });
 
 // Get single category by ID
@@ -179,65 +176,56 @@ exports.getAdminCategories = asyncErrorHandler(async (req, res, next) => {
 
 // Update category (Admin only)
 exports.updateCategory = asyncErrorHandler(async (req, res, next) => {
-    const { id } = req.params;
-    
-    // Validate ObjectId
-    if (!Category.schema.path('_id').instance.createFromHexString(id)) {
-        return next(new ApiError('Invalid category ID format', 400));
-    }
+  const { id } = req.params;
+  
+  let category = await Category.findById(id);
+  if (!category) {
+    return next(new ApiError('Category not found', 404));
+  }
 
-    let category = await Category.findById(id);
-    if (!category) {
-        return next(new ApiError('Category not found', 404));
-    }
+  const updates = req.body;
+  if (updates.name && updates.name.trim().length < 2) {
+    return next(new ApiError('Category name must be at least 2 characters', 400));
+  }
 
-    // Validate update data
-    const updates = req.body;
-    if (updates.name && updates.name.trim().length < 2) {
-        return next(new ApiError('Category name must be at least 2 characters', 400));
-    }
-
-    // Check for name conflicts (excluding current category)
-    if (updates.name && updates.name.trim() !== category.name) {
-        const existingCategory = await Category.findOne({ 
-            name: { $regex: new RegExp(`^${updates.name.trim()}$`, 'i') },
-            _id: { $ne: id }
-        });
-        if (existingCategory) {
-            return next(new ApiError('Category with this name already exists', 400));
-        }
-    }
-
-    // Update category
-    category = await Category.findByIdAndUpdate(
-        id, 
-        {
-            ...updates,
-            name: updates.name?.trim(),
-            description: updates.description?.trim(),
-            updatedBy: req.user?.id || null,
-        },
-        {
-            new: true,
-            runValidators: true,
-            context: 'query' // For virtuals/populate
-        }
-    ).populate('updatedBy', 'name email');
-
-    logger.info(`Category updated: ${category.name} by user ${req.user?.id}`);
-
-    res.status(200).json({
-        success: true,
-        message: 'Category updated successfully',
-        category: {
-            id: category._id,
-            name: category.name,
-            description: category.description,
-            image: category.image,
-            isActive: category.isActive,
-            updatedAt: category.updatedAt,
-        }
+  // Check for name conflicts
+  if (updates.name && updates.name.trim() !== category.name) {
+    const existingCategory = await Category.findOne({ 
+      name: { $regex: new RegExp(`^${updates.name.trim()}$`, 'i') },
+      _id: { $ne: id }
     });
+    
+    if (existingCategory) {
+      return next(new ApiError('Category with this name already exists', 400));
+    }
+  }
+
+  // Update category
+  category = await Category.findByIdAndUpdate(
+    id, 
+    {
+      name: updates.name?.trim(),
+      description: updates.description?.trim(),
+      isActive: updates.isActive,
+      updatedBy: req.user?.id || null,
+    },
+    {
+      new: true,
+      runValidators: true,
+    }
+  );
+
+  res.status(200).json({
+    success: true,
+    message: 'Category updated successfully',
+    category: {
+      id: category._id,
+      name: category.name,
+      description: category.description,
+      isActive: category.isActive,
+      updatedAt: category.updatedAt,
+    }
+  });
 });
 
 // Delete category (Admin only - soft delete recommended)

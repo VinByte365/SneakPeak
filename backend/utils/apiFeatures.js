@@ -1,5 +1,4 @@
 // utils/apiFeatures.js
-const User = require('../models/product');
 
 /**
  * APIFeatures - MongoDB query builder class
@@ -30,7 +29,6 @@ class APIFeatures {
    * Filter products by price range and other properties
    */
   filter() {
-    // { 'price[gte]': '100', 'price[lte]': '1000' }
     const queryCopy = { ...this.queryStr };
     
     // Removing fields from the query
@@ -47,12 +45,6 @@ class APIFeatures {
         priceFilter.price.$lte = Number(queryCopy['price[lte]']);
       }
       
-      // priceFilter {
-      //     price: {
-      //         $gte: 100,
-      //         $lte: 1000
-      //     }
-      // }
       delete queryCopy['price[gte]'];
       delete queryCopy['price[lte]'];
     }

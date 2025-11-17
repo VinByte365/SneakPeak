@@ -2,6 +2,53 @@ const User = require('../models/user');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const admin = require('firebase-admin');
+
+
+
+exports.loginWithFirebase = async (req, res) => {
+  try {
+    const { idToken } = req.body; // From Firebase client
+    
+    // Verify Firebase token
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const { uid, email, name, picture } = decodedToken;
+    
+    // Find or create user
+    let user = await User.findOne({ firebaseUid: uid });
+    
+    if (!user) {
+      user = await User.create({
+        firebaseUid: uid,
+        email: email,
+        name: name || email.split('@')[0],
+        avatar: { 
+          public_id: 'firebase_photo', 
+          url: picture || 'default.jpg' 
+        },
+        password: Math.random().toString(36).slice(-8) // Random password for Firebase users
+      });
+    }
+    
+    // Generate your JWT
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_TIME || '7d',
+    });
+    
+    res.status(200).json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar
+      }
+    });
+  } catch (error) {
+    res.status(401).json({ message: 'Firebase authentication failed', error: error.message });
+  }
+};
 
 /**
  * Register a new user

@@ -1,9 +1,119 @@
 const Order = require('../models/order');
 const Product = require('../models/product');
+const nodemailer = require('nodemailer');
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const path = require('path');
 
-// const ErrorHandler = require('../utils/errorHandler');
+// Configure email transporter
+const transporter = nodemailer.createTransport({
+  service: 'gmail', // or your email service
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASSWORD
+  }
+});
 
-// Create a new order   =>  /api/v1/order/new
+// Generate PDF receipt
+const generateOrderPDF = async (order) => {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument();
+    const fileName = `receipt-${order._id}.pdf`;
+    const filePath = path.join(__dirname, '../receipts', fileName);
+    
+    // Create receipts directory if it doesn't exist
+    if (!fs.existsSync(path.join(__dirname, '../receipts'))) {
+      fs.mkdirSync(path.join(__dirname, '../receipts'));
+    }
+    
+    const stream = fs.createWriteStream(filePath);
+    doc.pipe(stream);
+    
+    // Add content to PDF
+    doc.fontSize(20).text('SneakPeak - Order Receipt', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(12).text(`Order ID: ${order._id}`);
+    doc.text(`Date: ${new Date(order.paidAt).toLocaleDateString()}`);
+    doc.text(`Status: ${order.orderStatus}`);
+    doc.moveDown();
+    
+    doc.text('Items:', { underline: true });
+    order.orderItems.forEach((item, index) => {
+      doc.text(`${index + 1}. ${item.name} x ${item.quantity} - $${item.price}`);
+    });
+    
+    doc.moveDown();
+    doc.text(`Subtotal: $${order.itemsPrice}`);
+    doc.text(`Tax: $${order.taxPrice}`);
+    doc.text(`Shipping: $${order.shippingPrice}`);
+    doc.fontSize(14).text(`Total: $${order.totalPrice}`, { bold: true });
+    
+    doc.end();
+    
+    stream.on('finish', () => resolve(filePath));
+    stream.on('error', reject);
+  });
+};
+
+// Send email with PDF
+const sendOrderEmail = async (order, userEmail, pdfPath) => {
+  const mailOptions = {
+    from: process.env.EMAIL_USER,
+    to: userEmail,
+    subject: `SneakPeak - Order ${order._id} ${order.orderStatus}`,
+    html: `
+      <h2>Order Update</h2>
+      <p>Your order #${order._id} status: <strong>${order.orderStatus}</strong></p>
+      <p>Total: $${order.totalPrice}</p>
+      <p>Please find your receipt attached.</p>
+    `,
+    attachments: [
+      {
+        filename: `receipt-${order._id}.pdf`,
+        path: pdfPath
+      }
+    ]
+  };
+  
+  return transporter.sendMail(mailOptions);
+};
+
+// UPDATE your existing updateOrder function
+exports.updateOrder = async (req, res, next) => {
+  const order = await Order.findById(req.params.id).populate('user', 'email name');
+  
+  if (order.orderStatus === 'Delivered') {
+    return res.status(400).json({
+      message: 'You have already delivered this order',
+    });
+  }
+  
+  order.orderItems.forEach(async item => {
+    await updateStock(item.product, item.quantity);
+  });
+  
+  order.orderStatus = req.body.status;
+  order.deliveredAt = Date.now();
+  await order.save();
+  
+  // GENERATE PDF AND SEND EMAIL
+  try {
+    const pdfPath = await generateOrderPDF(order);
+    await sendOrderEmail(order, order.user.email, pdfPath);
+    
+    // Optional: Delete PDF after sending
+    fs.unlinkSync(pdfPath);
+  } catch (emailError) {
+    console.error('Email sending failed:', emailError);
+    // Don't fail the request if email fails
+  }
+  
+  res.status(200).json({
+    success: true,
+    message: 'Order updated and email sent'
+  });
+};
+
 exports.newOrder = async (req, res, next) => {
     const {
         orderItems,
@@ -86,28 +196,6 @@ exports.deleteOrder = async (req, res, next) => {
     }
     return res.status(200).json({
         success: true
-    })
-}
-
-exports.updateOrder = async (req, res, next) => {
-    const order = await Order.findById(req.params.id)
-    console.log(req.body.order)
-    if (order.orderStatus === 'Delivered') {
-        return res.status(400).json({
-            message: 'You have already delivered this order',
-
-        })
-    }
-
-    order.orderItems.forEach(async item => {
-        await updateStock(item.product, item.quantity)
-    })
-
-    order.orderStatus = req.body.status
-    order.deliveredAt = Date.now()
-    await order.save()
-    res.status(200).json({
-        success: true,
     })
 }
 
